@@ -1,0 +1,5 @@
+{
+  "name": "Control Cash",
+  "description": "Una aplicación de finanzas personales para gestionar gastos e ingresos recurrentes y casuales, realizar un seguimiento de las tarjetas de crédito y calcular los objetivos de ahorro semanales.",
+  "requestFramePermissions": []
+}
