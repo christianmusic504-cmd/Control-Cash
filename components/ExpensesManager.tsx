@@ -116,6 +116,7 @@ const CasualExpenseForm: React.FC<{
   const { addCasualExpense, updateCasualExpense, creditCards, debitCards } = useAppContext();
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
+  const [date, setDate] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(PaymentMethod.CASH);
   const [paymentMethodDetail, setPaymentMethodDetail] = useState('');
 
@@ -123,11 +124,13 @@ const CasualExpenseForm: React.FC<{
     if (expenseToEdit) {
       setName(expenseToEdit.name);
       setAmount(String(expenseToEdit.amount));
+      setDate(new Date(expenseToEdit.date).toISOString().split('T')[0]);
       setPaymentMethod(expenseToEdit.paymentMethod || PaymentMethod.CASH);
       setPaymentMethodDetail(expenseToEdit.paymentMethodDetail || '');
     } else {
       setName('');
       setAmount('');
+      setDate(new Date().toISOString().split('T')[0]); // Default to today
       setPaymentMethod(PaymentMethod.CASH);
       setPaymentMethodDetail('');
     }
@@ -138,6 +141,7 @@ const CasualExpenseForm: React.FC<{
     const expenseData = {
       name,
       amount: parseFloat(amount),
+      date: new Date(date).toISOString(),
       paymentMethod,
       paymentMethodDetail: paymentMethod === 'cash' ? undefined : paymentMethodDetail
     };
@@ -170,6 +174,7 @@ const CasualExpenseForm: React.FC<{
       <form onSubmit={handleSubmit} className="space-y-4">
         <input type="text" placeholder="Nombre" value={name} onChange={e => setName(e.target.value)} required className="w-full bg-slate-700 p-2 rounded-md" />
         <input type="number" placeholder="Cantidad" value={amount} onChange={e => setAmount(e.target.value)} required className="w-full bg-slate-700 p-2 rounded-md" />
+        <input type="date" value={date} onChange={e => setDate(e.target.value)} required className="w-full bg-slate-700 p-2 rounded-md" />
         <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value as PaymentMethod)} className="w-full bg-slate-700 p-2 rounded-md">
             {PAYMENT_METHOD_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
         </select>
@@ -334,7 +339,7 @@ const ExpensesManager: React.FC = () => {
       getPaymentMethodName(e),
       e.status.charAt(0).toUpperCase() + e.status.slice(1)
   ]);
-  const casualData = casualExpenses.map(e => [e.name, `$${e.amount.toFixed(2)}`, getPaymentMethodName(e)]);
+  const casualData = casualExpenses.map(e => [e.name, `$${e.amount.toFixed(2)}`, new Date(e.date).toLocaleDateString('es-ES'), getPaymentMethodName(e)]);
   const scheduledData = scheduledExpenses.map(e => [e.name, `$${e.amount.toFixed(2)}`, new Date(e.date).toLocaleDateString('es-ES'), getPaymentMethodName(e)]);
   
   const AddButton: React.FC<{onClick: () => void, children: React.ReactNode}> = ({ onClick, children }) => (
@@ -369,7 +374,7 @@ const ExpensesManager: React.FC = () => {
         actionButton={<AddButton onClick={handleAddCasual}>+ Agregar</AddButton>}
       >
         <DataTable
-          headers={['Nombre', 'Cantidad', 'Método de Pago']}
+          headers={['Nombre', 'Cantidad', 'Fecha', 'Método de Pago']}
           data={casualData}
           onEdit={handleEditCasual}
           onDelete={(index) => deleteCasualExpense(casualExpenses[index].id)}

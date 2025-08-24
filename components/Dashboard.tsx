@@ -276,42 +276,88 @@ const WeeklySavingsInfo: React.FC = () => {
 
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        
-        const allExpenses = [...recurringExpenses, ...casualExpenses, ...scheduledExpenses];
 
-        // 1. Calculate savings for recurring expenses and credit cards
-        const recurrentObligations = [
-            ...recurringExpenses.filter(e => e.status === 'active'),
-            ...creditCards.map(c => {
-                const cardExpenses = allExpenses.filter(
-                    e => e.paymentMethod === 'credit_card' && e.paymentMethodDetail === c.id
-                );
-                const estimatedPayment = cardExpenses.reduce((sum, e) => sum + e.amount, 0);
+        // 1. Calculate savings for recurring expenses (non-credit card)
+        const recurrent = recurringExpenses
+            .filter(e => e.status === 'active' && e.paymentMethod !== 'credit_card')
+            .map(item => {
+                const nextDueDate = getNextDueDate(item, today);
+                const incomeCount = countPaydays(today, nextDueDate, primaryIncome.frequencyDetail);
+                const amountToSave = incomeCount > 0 ? item.amount / incomeCount : item.amount;
+
                 return {
-                    name: `Pago T.C. ${c.name}`,
-                    amount: estimatedPayment > 0 ? estimatedPayment : 0,
-                    frequency: Frequency.MONTHLY as Frequency,
-                    frequencyDetail: c.paymentDueDate,
+                    name: item.name,
+                    amountToSave,
+                    totalAmount: item.amount,
+                    nextDueDate: nextDueDate.toLocaleDateString('es-ES'),
                 };
-            }).filter(c => c.amount > 0)
-        ];
+            });
 
-        const recurrent = recurrentObligations.map(item => {
-            const nextDueDate = getNextDueDate(item, today);
-            const incomeCount = countPaydays(today, nextDueDate, primaryIncome.frequencyDetail);
-            const amountToSave = incomeCount > 0 ? item.amount / incomeCount : item.amount;
+        // 2. Calculate savings for credit cards based on billing cycle
+        const cards = creditCards.map(c => {
+            const year = today.getFullYear();
+            const month = today.getMonth();
+            const day = today.getDate();
+
+            let statementStartDate, statementEndDate;
+            if (day > c.closingDate) {
+                // We are past this month's closing date. The current cycle ends next month.
+                statementStartDate = new Date(year, month, c.closingDate + 1);
+                statementEndDate = new Date(year, month + 1, c.closingDate);
+            } else {
+                // We are before this month's closing date. The current cycle ends this month.
+                statementStartDate = new Date(year, month - 1, c.closingDate + 1);
+                statementEndDate = new Date(year, month, c.closingDate);
+            }
+
+            let nextPaymentDueDate;
+            if (c.paymentDueDate > c.closingDate) {
+                nextPaymentDueDate = new Date(statementEndDate.getFullYear(), statementEndDate.getMonth(), c.paymentDueDate);
+            } else {
+                nextPaymentDueDate = new Date(statementEndDate.getFullYear(), statementEndDate.getMonth() + 1, c.paymentDueDate);
+            }
+
+            let oneTimeExpensesTotal = 0;
+            [...scheduledExpenses, ...casualExpenses].forEach(e => {
+                if ('date' in e && e.date && e.paymentMethod === 'credit_card' && e.paymentMethodDetail === c.id) {
+                    const expenseDate = new Date(e.date);
+                    if (expenseDate >= statementStartDate && expenseDate <= statementEndDate) {
+                        oneTimeExpensesTotal += e.amount;
+                    }
+                }
+            });
+
+            const recurringMonthlyTotal = recurringExpenses
+                .filter(e => e.paymentMethod === 'credit_card' && e.paymentMethodDetail === c.id && e.status === 'active')
+                .reduce((sum, e) => {
+                    let monthlyAmount = 0;
+                    switch (e.frequency) {
+                        case Frequency.WEEKLY: monthlyAmount = e.amount * 4.33; break;
+                        case Frequency.BIWEEKLY: monthlyAmount = e.amount * 2; break;
+                        case Frequency.MONTHLY: monthlyAmount = e.amount; break;
+                        case Frequency.BIMONTHLY: monthlyAmount = e.amount / 2; break;
+                    }
+                    return sum + monthlyAmount;
+                }, 0);
+            
+            const estimatedPayment = oneTimeExpensesTotal + recurringMonthlyTotal;
+            if (estimatedPayment <= 0) return null;
+
+            const incomeCount = countPaydays(today, nextPaymentDueDate, primaryIncome.frequencyDetail);
+            const amountToSave = incomeCount > 0 ? estimatedPayment / incomeCount : estimatedPayment;
 
             return {
-                name: item.name,
+                name: `Pago T.C. ${c.name}`,
                 amountToSave,
-                totalAmount: item.amount,
-                nextDueDate: nextDueDate.toLocaleDateString('es-ES'),
+                totalAmount: estimatedPayment,
+                nextDueDate: nextPaymentDueDate.toLocaleDateString('es-ES'),
             };
-        });
+        }).filter((g): g is NonNullable<typeof g> => g !== null);
 
-        // 2. Calculate savings for scheduled expenses
+
+        // 3. Calculate savings for scheduled expenses (non-credit card)
         const scheduled = scheduledExpenses
-            .filter(e => new Date(e.date) >= today)
+            .filter(e => new Date(e.date) >= today && e.paymentMethod !== 'credit_card')
             .map(item => {
                 const dueDate = new Date(new Date(item.date).valueOf() + new Date().getTimezoneOffset() * 60 * 1000);
                 dueDate.setHours(0,0,0,0);
@@ -325,8 +371,14 @@ const WeeklySavingsInfo: React.FC = () => {
                 };
             });
 
-        return { recurrent, scheduled };
+        return { recurrent: [...recurrent, ...cards], scheduled };
     }, [recurringIncomes, recurringExpenses, creditCards, scheduledExpenses, casualExpenses]);
+    
+    const totalWeeklySavings = useMemo(() => {
+        const recurrentTotal = savingsGoals.recurrent.reduce((sum, goal) => sum + goal.amountToSave, 0);
+        const scheduledTotal = savingsGoals.scheduled.reduce((sum, goal) => sum + goal.amountToSave, 0);
+        return recurrentTotal + scheduledTotal;
+    }, [savingsGoals]);
 
     const SavingsList: React.FC<{ 
         goals: typeof savingsGoals.recurrent, 
@@ -380,10 +432,16 @@ const WeeklySavingsInfo: React.FC = () => {
             <h3 className="text-xl font-semibold mb-4 text-cyan-400">Metas de Ahorro Semanal</h3>
             {hasWeeklyIncome ? (
                 hasGoals ? (
-                    <div className="space-y-6">
-                        <SavingsList goals={savingsGoals.recurrent} title="Pagos Recurrentes y Tarjetas" onSaveClick={handleOpenSaveModal} savedGoals={savedGoals} currentWeekId={currentWeekId} />
-                        <SavingsList goals={savingsGoals.scheduled} title="Gastos Programados" onSaveClick={handleOpenSaveModal} savedGoals={savedGoals} currentWeekId={currentWeekId} />
-                    </div>
+                    <>
+                        <div className="mb-6 p-4 bg-slate-900/50 rounded-lg text-center border border-slate-700">
+                            <h4 className="text-slate-400 text-sm font-medium">Ahorro Total Sugerido para la Semana</h4>
+                            <p className="text-3xl font-bold text-green-400">${totalWeeklySavings.toFixed(2)}</p>
+                        </div>
+                        <div className="space-y-6">
+                            <SavingsList goals={savingsGoals.recurrent} title="Pagos Recurrentes y Tarjetas" onSaveClick={handleOpenSaveModal} savedGoals={savedGoals} currentWeekId={currentWeekId} />
+                            <SavingsList goals={savingsGoals.scheduled} title="Gastos Programados" onSaveClick={handleOpenSaveModal} savedGoals={savedGoals} currentWeekId={currentWeekId} />
+                        </div>
+                    </>
                 ) : (
                     <p className="text-slate-400">No hay gastos recurrentes o programados para calcular metas. ¡Estás al día!</p>
                 )

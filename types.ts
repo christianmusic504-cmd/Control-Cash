@@ -30,6 +30,7 @@ export interface RecurringExpense extends RecurringItem {
 }
 
 export interface CasualExpense extends BaseItem {
+  date: string; // ISO string
   paymentMethod: PaymentMethod;
   paymentMethodDetail?: string; // e.g., card ID
 }
@@ -53,7 +54,7 @@ export interface CreditCard {
 }
 
 export interface DebitCard {
-  id: string;
+  id:string;
   name: string;
   balance: number;
 }
