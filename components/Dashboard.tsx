@@ -249,8 +249,7 @@ const getWeekId = (date: Date): string => {
     return `${d.getUTCFullYear()}-${weekNo}`;
 };
 
-// Returns a formatted string like "Semana del 22 jul. al 28 jul."
-const getWeekRangeFromId = (weekId: string): string => {
+const getStartDateFromWeekId = (weekId: string): Date => {
     const [year, week] = weekId.split('-').map(Number);
     
     // Find the date of the Thursday of week 1
@@ -266,9 +265,22 @@ const getWeekRangeFromId = (weekId: string): string => {
     const monday = new Date(d);
     monday.setUTCDate(d.getUTCDate() - 3);
 
+    return new Date(monday.getUTCFullYear(), monday.getUTCMonth(), monday.getUTCDate());
+};
+
+const changeWeek = (weekId: string, direction: 1 | -1): string => {
+    const mondayOfCurrentWeek = getStartDateFromWeekId(weekId);
+    mondayOfCurrentWeek.setDate(mondayOfCurrentWeek.getDate() + (7 * direction));
+    return getWeekId(mondayOfCurrentWeek);
+};
+
+// Returns a formatted string like "Semana del 22 jul. al 28 jul."
+const getWeekRangeFromId = (weekId: string): string => {
+    const monday = getStartDateFromWeekId(weekId);
+
     // Sunday is Monday + 6 days
     const sunday = new Date(monday);
-    sunday.setUTCDate(monday.getUTCDate() + 6);
+    sunday.setDate(monday.getDate() + 6);
 
     const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
     const locale = 'es-ES';
@@ -341,7 +353,11 @@ const WeeklySavingsInfo: React.FC = () => {
     const [selectedGoal, setSelectedGoal] = useState<Goal | null>(null);
     const [savedGoals, setSavedGoals] = useLocalStorage<{ [key: string]: string }>('saved-weekly-goals', {});
 
-    const currentWeekId = getWeekId(new Date());
+    const actualCurrentWeekId = useMemo(() => getWeekId(new Date()), []);
+    const [displayedWeekId, setDisplayedWeekId] = useState(actualCurrentWeekId);
+
+    const handleNextWeek = () => setDisplayedWeekId(prev => changeWeek(prev, 1));
+    const handlePrevWeek = () => setDisplayedWeekId(prev => changeWeek(prev, -1));
 
     const handleOpenSaveModal = (goal: Goal) => {
         setSelectedGoal(goal);
@@ -353,7 +369,7 @@ const WeeklySavingsInfo: React.FC = () => {
             addFundsToDebitCard(debitCardId, selectedGoal.amountToSave);
             setSavedGoals(prev => ({
                 ...prev,
-                [selectedGoal.name]: currentWeekId
+                [selectedGoal.name]: displayedWeekId
             }));
         }
     };
@@ -362,15 +378,16 @@ const WeeklySavingsInfo: React.FC = () => {
         const primaryIncome = recurringIncomes.find(i => i.frequency === Frequency.WEEKLY && i.status === 'active');
         if (!primaryIncome) return { recurrent: [], scheduled: [] };
 
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        const weekStartDate = getStartDateFromWeekId(displayedWeekId);
+        weekStartDate.setHours(0, 0, 0, 0);
 
         // 1. Calculate savings for recurring expenses (non-credit card)
         const recurrent = recurringExpenses
             .filter(e => e.status === 'active' && e.paymentMethod !== 'credit_card')
             .map(item => {
-                const nextDueDate = getNextDueDate(item, today);
-                const incomeCount = countPaydays(today, nextDueDate, primaryIncome.frequencyDetail);
+                const nextDueDate = getNextDueDate(item, weekStartDate);
+                if (nextDueDate < weekStartDate) return null;
+                const incomeCount = countPaydays(weekStartDate, nextDueDate, primaryIncome.frequencyDetail);
                 const amountToSave = incomeCount > 0 ? item.amount / incomeCount : item.amount;
 
                 return {
@@ -379,21 +396,19 @@ const WeeklySavingsInfo: React.FC = () => {
                     totalAmount: item.amount,
                     nextDueDate: nextDueDate.toLocaleDateString('es-ES'),
                 };
-            });
+            }).filter((g): g is NonNullable<typeof g> => g !== null);
 
         // 2. Calculate savings for credit cards based on billing cycle
         const cards = creditCards.map(c => {
-            const year = today.getFullYear();
-            const month = today.getMonth();
-            const day = today.getDate();
+            const year = weekStartDate.getFullYear();
+            const month = weekStartDate.getMonth();
+            const day = weekStartDate.getDate();
 
             let statementStartDate, statementEndDate;
             if (day > c.closingDate) {
-                // We are past this month's closing date. The current cycle ends next month.
                 statementStartDate = new Date(year, month, c.closingDate + 1);
                 statementEndDate = new Date(year, month + 1, c.closingDate);
             } else {
-                // We are before this month's closing date. The current cycle ends this month.
                 statementStartDate = new Date(year, month - 1, c.closingDate + 1);
                 statementEndDate = new Date(year, month, c.closingDate);
             }
@@ -404,6 +419,7 @@ const WeeklySavingsInfo: React.FC = () => {
             } else {
                 nextPaymentDueDate = new Date(statementEndDate.getFullYear(), statementEndDate.getMonth() + 1, c.paymentDueDate);
             }
+             if (nextPaymentDueDate < weekStartDate) return null;
 
             let oneTimeExpensesTotal = 0;
             [...scheduledExpenses, ...casualExpenses].forEach(e => {
@@ -431,7 +447,7 @@ const WeeklySavingsInfo: React.FC = () => {
             const estimatedPayment = oneTimeExpensesTotal + recurringMonthlyTotal;
             if (estimatedPayment <= 0) return null;
 
-            const incomeCount = countPaydays(today, nextPaymentDueDate, primaryIncome.frequencyDetail);
+            const incomeCount = countPaydays(weekStartDate, nextPaymentDueDate, primaryIncome.frequencyDetail);
             const amountToSave = incomeCount > 0 ? estimatedPayment / incomeCount : estimatedPayment;
 
             return {
@@ -445,11 +461,11 @@ const WeeklySavingsInfo: React.FC = () => {
 
         // 3. Calculate savings for scheduled expenses (non-credit card)
         const scheduled = scheduledExpenses
-            .filter(e => new Date(e.date) >= today && e.paymentMethod !== 'credit_card')
+            .filter(e => new Date(e.date) >= weekStartDate && e.paymentMethod !== 'credit_card')
             .map(item => {
                 const dueDate = new Date(new Date(item.date).valueOf() + new Date().getTimezoneOffset() * 60 * 1000);
                 dueDate.setHours(0,0,0,0);
-                const incomeCount = countPaydays(today, dueDate, primaryIncome.frequencyDetail);
+                const incomeCount = countPaydays(weekStartDate, dueDate, primaryIncome.frequencyDetail);
                 const amountToSave = incomeCount > 0 ? item.amount / incomeCount : item.amount;
                 return {
                     name: item.name,
@@ -462,9 +478,9 @@ const WeeklySavingsInfo: React.FC = () => {
         // 4. Calculate savings for installment expenses
         const installments = installmentExpenses.filter(e => e.status === 'active').map(item => {
             const allPaymentDates = getInstallmentPaymentDates(item);
-            const todayUTC = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()));
+            const weekStartUTC = new Date(Date.UTC(weekStartDate.getFullYear(), weekStartDate.getMonth(), weekStartDate.getDate()));
             
-            const nextPaymentIndex = allPaymentDates.findIndex(d => d.getTime() >= todayUTC.getTime());
+            const nextPaymentIndex = allPaymentDates.findIndex(d => d.getTime() >= weekStartUTC.getTime());
             if (nextPaymentIndex === -1) return null;
         
             const nextDueDate = allPaymentDates[nextPaymentIndex];
@@ -476,7 +492,7 @@ const WeeklySavingsInfo: React.FC = () => {
             if (paymentAmount <= 0) return null;
 
             const localNextDueDate = new Date(nextDueDate.getUTCFullYear(), nextDueDate.getUTCMonth(), nextDueDate.getUTCDate());
-            const incomeCount = countPaydays(today, localNextDueDate, primaryIncome.frequencyDetail);
+            const incomeCount = countPaydays(weekStartDate, localNextDueDate, primaryIncome.frequencyDetail);
             const amountToSave = incomeCount > 0 ? paymentAmount / incomeCount : paymentAmount;
             
             return {
@@ -489,7 +505,7 @@ const WeeklySavingsInfo: React.FC = () => {
 
 
         return { recurrent: [...recurrent, ...cards], scheduled: [...scheduled, ...installments] };
-    }, [recurringIncomes, recurringExpenses, creditCards, scheduledExpenses, casualExpenses, installmentExpenses]);
+    }, [recurringIncomes, recurringExpenses, creditCards, scheduledExpenses, casualExpenses, installmentExpenses, displayedWeekId]);
     
     const totalWeeklySavings = useMemo(() => {
         const recurrentTotal = savingsGoals.recurrent.reduce((sum, goal) => sum + goal.amountToSave, 0);
@@ -502,15 +518,16 @@ const WeeklySavingsInfo: React.FC = () => {
         title: string, 
         onSaveClick: (goal: Goal) => void,
         savedGoals: { [key: string]: string },
-        currentWeekId: string
-    }> = ({ goals, title, onSaveClick, savedGoals, currentWeekId }) => (
+        viewedWeekId: string,
+        isSavingEnabled: boolean
+    }> = ({ goals, title, onSaveClick, savedGoals, viewedWeekId, isSavingEnabled }) => (
         <>
             {goals.length > 0 && (
                 <div>
                     <h4 className="text-lg font-semibold mb-3 text-cyan-300">{title}</h4>
                     <ul className="space-y-4">
                         {goals.map((goal, index) => {
-                            const isSavedForWeek = savedGoals[goal.name] === currentWeekId;
+                            const isSavedForWeek = savedGoals[goal.name] === viewedWeekId;
                             return (
                                 <li key={index} className="p-4 bg-slate-700/50 rounded-md">
                                     <div className="flex justify-between items-center">
@@ -522,14 +539,15 @@ const WeeklySavingsInfo: React.FC = () => {
                                     </p>
                                     {isSavedForWeek ? (
                                         <div className="mt-3 w-full text-center py-1.5 rounded-md text-sm font-semibold bg-slate-600 text-slate-300 cursor-default">
-                                            ✓ Ahorrado para la {getWeekRangeFromId(currentWeekId)}
+                                            ✓ Ahorrado para la {getWeekRangeFromId(viewedWeekId)}
                                         </div>
                                     ) : (
                                         <button
                                             onClick={() => onSaveClick({ name: goal.name, amountToSave: goal.amountToSave })}
-                                            className="mt-3 w-full py-1.5 rounded-md text-sm font-semibold transition-colors shadow-sm bg-green-600/80 text-white hover:bg-green-700/80"
+                                            disabled={!isSavingEnabled}
+                                            className="mt-3 w-full py-1.5 rounded-md text-sm font-semibold transition-colors shadow-sm bg-green-600/80 text-white hover:bg-green-700/80 disabled:bg-slate-600/50 disabled:cursor-not-allowed disabled:text-slate-400"
                                         >
-                                            Ahorrar
+                                            {isSavingEnabled ? "Ahorrar" : "Ahorro (Semana Futura)"}
                                         </button>
                                     )}
                                 </li>
@@ -546,21 +564,28 @@ const WeeklySavingsInfo: React.FC = () => {
 
     return (
         <div className="bg-slate-800 p-6 rounded-lg shadow-xl">
-            <h3 className="text-xl font-semibold mb-4 text-cyan-400">Metas de Ahorro Semanal</h3>
+            <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-semibold text-cyan-400">Metas de Ahorro Semanal</h3>
+                 <div className="flex items-center space-x-2">
+                    <button onClick={handlePrevWeek} disabled={displayedWeekId === actualCurrentWeekId} className="px-3 py-1 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 disabled:bg-slate-700/50 disabled:text-slate-500 disabled:cursor-not-allowed transition-colors">&lt; Ant</button>
+                    <button onClick={handleNextWeek} className="px-3 py-1 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 transition-colors">Sig &gt;</button>
+                </div>
+            </div>
+
             {hasWeeklyIncome ? (
                 hasGoals ? (
                     <>
                         <div className="mb-6 p-4 bg-slate-900/50 rounded-lg text-center border border-slate-700">
-                            <h4 className="text-slate-400 text-sm font-medium">Ahorro Total Sugerido para la Semana</h4>
+                            <h4 className="text-slate-400 text-sm font-medium">Ahorro Total Sugerido para la {getWeekRangeFromId(displayedWeekId)}</h4>
                             <p className="text-3xl font-bold text-green-400">${totalWeeklySavings.toFixed(2)}</p>
                         </div>
                         <div className="space-y-6">
-                            <SavingsList goals={savingsGoals.recurrent} title="Pagos Recurrentes y Tarjetas" onSaveClick={handleOpenSaveModal} savedGoals={savedGoals} currentWeekId={currentWeekId} />
-                            <SavingsList goals={savingsGoals.scheduled} title="Gastos Programados y a Plazos" onSaveClick={handleOpenSaveModal} savedGoals={savedGoals} currentWeekId={currentWeekId} />
+                            <SavingsList goals={savingsGoals.recurrent} title="Pagos Recurrentes y Tarjetas" onSaveClick={handleOpenSaveModal} savedGoals={savedGoals} viewedWeekId={displayedWeekId} isSavingEnabled={displayedWeekId === actualCurrentWeekId} />
+                            <SavingsList goals={savingsGoals.scheduled} title="Gastos Programados y a Plazos" onSaveClick={handleOpenSaveModal} savedGoals={savedGoals} viewedWeekId={displayedWeekId} isSavingEnabled={displayedWeekId === actualCurrentWeekId} />
                         </div>
                     </>
                 ) : (
-                    <p className="text-slate-400">No hay gastos recurrentes o programados para calcular metas. ¡Estás al día!</p>
+                    <p className="text-slate-400">No hay gastos recurrentes o programados para calcular metas para la {getWeekRangeFromId(displayedWeekId)}.</p>
                 )
             ) : (
                 <p className="text-slate-400">Agrega un ingreso recurrente semanal para calcular tus metas de ahorro.</p>
