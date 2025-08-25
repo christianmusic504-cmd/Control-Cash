@@ -41,6 +41,20 @@ export interface ScheduledExpense extends BaseItem {
   paymentMethodDetail?: string; // e.g., card ID
 }
 
+export interface InstallmentExpense extends BaseItem {
+  isVariable?: boolean;
+  paymentAmounts?: number[];
+  paymentMethod: PaymentMethod;
+  paymentMethodDetail?: string;
+  startDate: string; // ISO string, date of the first payment
+  totalPayments: number;
+  frequencyType: 'weekly' | 'monthly' | 'twice_a_month';
+  dayOfWeek?: number; // for weekly
+  dayOfMonth1?: number; // for monthly or twice_a_month
+  dayOfMonth2?: number; // for twice_a_month
+  status: 'active' | 'suspended';
+}
+
 export type RecurringIncome = RecurringItem;
 
 export type CasualIncome = BaseItem;
@@ -59,13 +73,14 @@ export interface DebitCard {
   balance: number;
 }
 
-export type Expense = RecurringExpense | CasualExpense | ScheduledExpense;
+export type Expense = RecurringExpense | CasualExpense | ScheduledExpense | InstallmentExpense;
 export type Income = RecurringIncome | CasualIncome;
 
 export interface AppState {
   recurringExpenses: RecurringExpense[];
   casualExpenses: CasualExpense[];
   scheduledExpenses: ScheduledExpense[];
+  installmentExpenses: InstallmentExpense[];
   recurringIncomes: RecurringIncome[];
   casualIncomes: CasualIncome[];
   creditCards: CreditCard[];

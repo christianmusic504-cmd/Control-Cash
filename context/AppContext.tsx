@@ -1,11 +1,12 @@
 import React, { createContext, useContext } from 'react';
 import useLocalStorage from '../hooks/useLocalStorage';
-import type { AppState, RecurringExpense, CasualExpense, ScheduledExpense, RecurringIncome, CasualIncome, CreditCard, DebitCard } from '../types';
+import type { AppState, RecurringExpense, CasualExpense, ScheduledExpense, RecurringIncome, CasualIncome, CreditCard, DebitCard, InstallmentExpense } from '../types';
 
 const initialState: AppState = {
   recurringExpenses: [],
   casualExpenses: [],
   scheduledExpenses: [],
+  installmentExpenses: [],
   recurringIncomes: [],
   casualIncomes: [],
   creditCards: [],
@@ -22,6 +23,9 @@ interface AppContextType extends AppState {
   addScheduledExpense: (expense: Omit<ScheduledExpense, 'id'>) => void;
   updateScheduledExpense: (expense: ScheduledExpense) => void;
   deleteScheduledExpense: (id: string) => void;
+  addInstallmentExpense: (expense: Omit<InstallmentExpense, 'id'>) => void;
+  updateInstallmentExpense: (expense: InstallmentExpense) => void;
+  deleteInstallmentExpense: (id: string) => void;
   addRecurringIncome: (income: Omit<RecurringIncome, 'id'>) => void;
   updateRecurringIncome: (income: RecurringIncome) => void;
   deleteRecurringIncome: (id: string) => void;
@@ -57,6 +61,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const recurringExpensesCrud = crudFactory<RecurringExpense>('recurringExpenses');
   const casualExpensesCrud = crudFactory<CasualExpense>('casualExpenses');
   const scheduledExpensesCrud = crudFactory<ScheduledExpense>('scheduledExpenses');
+  const installmentExpensesCrud = crudFactory<InstallmentExpense>('installmentExpenses');
   const recurringIncomesCrud = crudFactory<RecurringIncome>('recurringIncomes');
   const casualIncomesCrud = crudFactory<CasualIncome>('casualIncomes');
   const creditCardsCrud = crudFactory<CreditCard>('creditCards');
@@ -85,6 +90,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addScheduledExpense: scheduledExpensesCrud.add,
     updateScheduledExpense: scheduledExpensesCrud.update,
     deleteScheduledExpense: scheduledExpensesCrud.remove,
+    addInstallmentExpense: installmentExpensesCrud.add,
+    updateInstallmentExpense: installmentExpensesCrud.update,
+    deleteInstallmentExpense: installmentExpensesCrud.remove,
     addRecurringIncome: recurringIncomesCrud.add,
     updateRecurringIncome: recurringIncomesCrud.update,
     deleteRecurringIncome: recurringIncomesCrud.remove,

@@ -1,16 +1,98 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useAppContext } from '../context/AppContext';
-import { Frequency, RecurringExpense, RecurringIncome, CreditCard, ScheduledExpense, CasualExpense, DebitCard } from '../types';
+import { Frequency, RecurringExpense, RecurringIncome, CreditCard, ScheduledExpense, CasualExpense, DebitCard, InstallmentExpense } from '../types';
 import { Modal } from './shared/ManagerComponents';
 import useLocalStorage from '../hooks/useLocalStorage';
 
+const getInstallmentPaymentDates = (expense: InstallmentExpense): Date[] => {
+    const dates: Date[] = [];
+    if (!expense.startDate || !expense.totalPayments) return dates;
+    
+    const startDate = new Date(expense.startDate);
+    startDate.setUTCHours(0, 0, 0, 0);
+
+    let cursorDate = new Date(startDate);
+
+    while (dates.length < expense.totalPayments) {
+        let candidateDate: Date | null = null;
+        
+        switch (expense.frequencyType) {
+            case 'weekly': {
+                const dayOfWeek = expense.dayOfWeek!;
+                const currentDay = cursorDate.getUTCDay();
+                const diff = (dayOfWeek - currentDay + 7) % 7;
+                let nextDate = new Date(cursorDate);
+                nextDate.setUTCDate(cursorDate.getUTCDate() + diff);
+                
+                if (dates.length > 0 && nextDate <= dates[dates.length-1]) {
+                    nextDate.setUTCDate(nextDate.getUTCDate() + 7);
+                }
+                candidateDate = nextDate;
+                break;
+            }
+            case 'monthly': {
+                const dayOfMonth = expense.dayOfMonth1!;
+                let nextDate = new Date(Date.UTC(cursorDate.getUTCFullYear(), cursorDate.getUTCMonth(), dayOfMonth));
+                if (dates.length === 0 && nextDate < cursorDate) {
+                   nextDate = new Date(Date.UTC(cursorDate.getUTCFullYear(), cursorDate.getUTCMonth() + 1, dayOfMonth));
+                } else if (dates.length > 0 && nextDate <= dates[dates.length-1]) {
+                   nextDate = new Date(Date.UTC(dates[dates.length-1].getUTCFullYear(), dates[dates.length-1].getUTCMonth() + 1, dayOfMonth));
+                }
+                candidateDate = nextDate;
+                break;
+            }
+            case 'twice_a_month': {
+                const day1 = expense.dayOfMonth1!;
+                const day2 = expense.dayOfMonth2!;
+                const year = cursorDate.getUTCFullYear();
+                const month = cursorDate.getUTCMonth();
+                
+                let date1 = new Date(Date.UTC(year, month, day1));
+                let date2 = new Date(Date.UTC(year, month, day2));
+
+                if(dates.length > 0) {
+                    const lastDate = dates[dates.length - 1];
+                    if (lastDate.getUTCDate() === day1) { // Last was day1, next is day2
+                        if(date2 > lastDate) candidateDate = date2;
+                        else candidateDate = new Date(Date.UTC(year, month + 1, day1));
+                    } else { // Last was day2, next is day1 of next month
+                        candidateDate = new Date(Date.UTC(year, month + 1, day1));
+                    }
+                } else {
+                     if (date1 >= cursorDate) candidateDate = date1;
+                     else if (date2 >= cursorDate) candidateDate = date2;
+                     else candidateDate = new Date(Date.UTC(year, month + 1, day1));
+                }
+                break;
+            }
+        }
+        
+        if (candidateDate) {
+            dates.push(candidateDate);
+            cursorDate = new Date(candidateDate);
+        } else {
+            break; 
+        }
+    }
+    return dates.slice(0, expense.totalPayments);
+};
+
 const Calendar: React.FC = () => {
-  const { recurringExpenses, scheduledExpenses, recurringIncomes, creditCards } = useAppContext();
+  const { recurringExpenses, scheduledExpenses, recurringIncomes, creditCards, installmentExpenses } = useAppContext();
   const [currentDate, setCurrentDate] = useState(new Date());
 
   const daysInMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate();
   const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).getDay();
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+
+  const installmentPaymentDates = useMemo(() => {
+    const allDates: {name: string, date: Date}[] = [];
+    installmentExpenses.filter(e => e.status === 'active').forEach(expense => {
+        const paymentDates = getInstallmentPaymentDates(expense);
+        paymentDates.forEach(date => allDates.push({name: expense.name, date}));
+    });
+    return allDates;
+  }, [installmentExpenses]);
 
   const getEventsForDay = (day: number) => {
     const events = [];
@@ -55,7 +137,13 @@ const Calendar: React.FC = () => {
     
     creditCards.forEach(c => {
       if (c.paymentDueDate === day) events.push({type: 'card', name: `Pagar ${c.name}`});
-    })
+    });
+
+    installmentPaymentDates.forEach(payment => {
+        if(payment.date.getUTCFullYear() === date.getFullYear() && payment.date.getUTCMonth() === date.getMonth() && payment.date.getUTCDate() === day) {
+            events.push({type: 'expense', name: payment.name});
+        }
+    });
 
     return events;
   };
@@ -248,7 +336,7 @@ const SaveGoalModal: React.FC<{
 };
 
 const WeeklySavingsInfo: React.FC = () => {
-    const { recurringIncomes, recurringExpenses, creditCards, scheduledExpenses, casualExpenses, addFundsToDebitCard } = useAppContext();
+    const { recurringIncomes, recurringExpenses, creditCards, scheduledExpenses, casualExpenses, addFundsToDebitCard, installmentExpenses } = useAppContext();
     const [isSaveModalOpen, setSaveModalOpen] = useState(false);
     const [selectedGoal, setSelectedGoal] = useState<Goal | null>(null);
     const [savedGoals, setSavedGoals] = useLocalStorage<{ [key: string]: string }>('saved-weekly-goals', {});
@@ -370,9 +458,38 @@ const WeeklySavingsInfo: React.FC = () => {
                     nextDueDate: dueDate.toLocaleDateString('es-ES'),
                 };
             });
+        
+        // 4. Calculate savings for installment expenses
+        const installments = installmentExpenses.filter(e => e.status === 'active').map(item => {
+            const allPaymentDates = getInstallmentPaymentDates(item);
+            const todayUTC = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()));
+            
+            const nextPaymentIndex = allPaymentDates.findIndex(d => d.getTime() >= todayUTC.getTime());
+            if (nextPaymentIndex === -1) return null;
+        
+            const nextDueDate = allPaymentDates[nextPaymentIndex];
 
-        return { recurrent: [...recurrent, ...cards], scheduled };
-    }, [recurringIncomes, recurringExpenses, creditCards, scheduledExpenses, casualExpenses]);
+            const paymentAmount = (item.isVariable && item.paymentAmounts)
+                ? (item.paymentAmounts[nextPaymentIndex] || 0)
+                : (item.amount || 0);
+            
+            if (paymentAmount <= 0) return null;
+
+            const localNextDueDate = new Date(nextDueDate.getUTCFullYear(), nextDueDate.getUTCMonth(), nextDueDate.getUTCDate());
+            const incomeCount = countPaydays(today, localNextDueDate, primaryIncome.frequencyDetail);
+            const amountToSave = incomeCount > 0 ? paymentAmount / incomeCount : paymentAmount;
+            
+            return {
+                name: item.name,
+                amountToSave,
+                totalAmount: paymentAmount,
+                nextDueDate: localNextDueDate.toLocaleDateString('es-ES'),
+            };
+        }).filter((g): g is NonNullable<typeof g> => g !== null);
+
+
+        return { recurrent: [...recurrent, ...cards], scheduled: [...scheduled, ...installments] };
+    }, [recurringIncomes, recurringExpenses, creditCards, scheduledExpenses, casualExpenses, installmentExpenses]);
     
     const totalWeeklySavings = useMemo(() => {
         const recurrentTotal = savingsGoals.recurrent.reduce((sum, goal) => sum + goal.amountToSave, 0);
@@ -439,7 +556,7 @@ const WeeklySavingsInfo: React.FC = () => {
                         </div>
                         <div className="space-y-6">
                             <SavingsList goals={savingsGoals.recurrent} title="Pagos Recurrentes y Tarjetas" onSaveClick={handleOpenSaveModal} savedGoals={savedGoals} currentWeekId={currentWeekId} />
-                            <SavingsList goals={savingsGoals.scheduled} title="Gastos Programados" onSaveClick={handleOpenSaveModal} savedGoals={savedGoals} currentWeekId={currentWeekId} />
+                            <SavingsList goals={savingsGoals.scheduled} title="Gastos Programados y a Plazos" onSaveClick={handleOpenSaveModal} savedGoals={savedGoals} currentWeekId={currentWeekId} />
                         </div>
                     </>
                 ) : (
