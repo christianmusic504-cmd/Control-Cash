@@ -1,0 +1,5 @@
+{
+  "name": "Control Cash",
+  "description": "A web application for personal finance management. It allows users to register and control their expenses, income, and cards, and offers a dashboard with a financial calendar and tools for weekly savings planning.",
+  "requestFramePermissions": []
+}
