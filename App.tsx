@@ -108,24 +108,36 @@ export default function App() {
                     };
                     break;
                 case ExpenseType.Installment:
-                     const totalAmount = Number(itemData.totalAmount) || 0;
-                     const numberOfPayments = Number(itemData.numberOfPayments) || 1;
-                     const installmentAmount = numberOfPayments > 0 ? totalAmount / numberOfPayments : 0;
-                     const existingExpense = expenses.find(e => e.id === id) as InstallmentExpense | undefined;
-                     cleanExpense = {
+                    const numberOfPayments = Number(itemData.numberOfPayments) || 1;
+                    const existingExpense = expenses.find(e => e.id === id) as InstallmentExpense | undefined;
+
+                    const newPayments = itemData.payments.map((p: { amount: number }, index: number) => ({
+                        amount: p.amount,
+                        paid: existingExpense?.payments[index]?.paid || false
+                    }));
+                    
+                    if (newPayments.length > numberOfPayments) {
+                        newPayments.splice(numberOfPayments);
+                    }
+                    
+                    const nextUnpaidPayment = newPayments.find((p: {paid: boolean}) => !p.paid);
+                    const amountForDisplay = nextUnpaidPayment ? nextUnpaidPayment.amount : 0;
+                    const totalAmount = newPayments.reduce((sum: number, p: {amount: number}) => sum + p.amount, 0);
+
+                    cleanExpense = {
                         id,
                         name: String(itemData.name),
-                        amount: installmentAmount,
+                        amount: amountForDisplay,
                         type: ExpenseType.Installment,
                         totalAmount: totalAmount,
                         numberOfPayments: numberOfPayments,
-                        payments: existingExpense?.payments || Array.from({ length: numberOfPayments }, () => ({ amount: installmentAmount, paid: false })),
+                        payments: newPayments,
                         frequency: itemData.frequency,
                         paymentMethod: itemData.paymentMethod,
                         paymentSourceId: itemData.paymentSourceId || undefined,
                         startDate: String(itemData.startDate),
                         suspended: itemData.suspended || false,
-                     };
+                    };
                     break;
                 case ExpenseType.Casual:
                     cleanExpense = { 
@@ -291,6 +303,45 @@ export default function App() {
     });
   };
 
+  const handlePayWithSavings = (expenseId: string, paymentAmount: number, sourceCardId: string) => {
+    const sourceCard = cards.find(c => c.id === sourceCardId) as DebitCard | undefined;
+    if (!sourceCard || sourceCard.balance < paymentAmount) {
+        alert("Fondos insuficientes en la tarjeta seleccionada.");
+        return;
+    }
+
+    // 1. Update Card Balance
+    setCards(prev => prev.map(c => 
+        (c.id === sourceCardId && c.type === 'debit') 
+            ? { ...c, balance: c.balance - paymentAmount } 
+            : c
+    ));
+
+    // 2. Update Expense Status (Installment only for now)
+    setExpenses(prev => prev.map(exp => {
+        if (exp.id === expenseId && exp.type === ExpenseType.Installment) {
+            const nextPaymentIndex = exp.payments.findIndex(p => !p.paid);
+            if (nextPaymentIndex !== -1) {
+                const newPayments = [...exp.payments];
+                newPayments[nextPaymentIndex].paid = true;
+                
+                // Update the main amount to the next unpaid amount
+                const nextUnpaid = newPayments.find(p => !p.paid);
+                
+                return { ...exp, payments: newPayments, amount: nextUnpaid ? nextUnpaid.amount : 0 };
+            }
+        }
+        return exp;
+    }));
+
+    // 3. Mark all 'saved' goals for this expense as 'spent'
+    setSavingsGoals(prev => prev.map(g => 
+        (g.expenseId === expenseId && g.status === 'saved') 
+            ? { ...g, status: 'spent' } 
+            : g
+    ));
+  };
+
 
   const handleToggleSuspend = (type: 'expense' | 'income', id: string) => {
     if (type === 'expense') {
@@ -324,7 +375,15 @@ export default function App() {
         return <CrudView title="Tarjetas" items={cards} itemType="card" openModal={openModal} onDelete={handleDelete} />;
       case 'dashboard':
       default:
-        return <Dashboard savingsGoals={savingsGoals} cards={cards} incomes={incomes} expenses={expenses} setSavingsGoals={setSavingsGoals} setCards={setCards}/>;
+        return <Dashboard 
+            savingsGoals={savingsGoals} 
+            cards={cards} 
+            incomes={incomes} 
+            expenses={expenses} 
+            setSavingsGoals={setSavingsGoals} 
+            setCards={setCards}
+            handlePayWithSavings={handlePayWithSavings}
+        />;
     }
   };
   

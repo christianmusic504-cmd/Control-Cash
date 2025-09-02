@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, Expense, ExpenseType, Frequency, PaymentMethod, RecurringExpense, CasualExpense, ScheduledExpense, InstallmentExpense } from '../../types';
 import { EXPENSE_TYPE_OPTIONS, FREQUENCY_OPTIONS, DAYS_OF_WEEK, PAYMENT_METHOD_OPTIONS } from '../../constants';
 import { FormRow, Field, Input, Select } from './FormFields';
@@ -23,6 +23,40 @@ export const ExpenseForm: React.FC<{ itemToEdit: Expense | null, onSave: (data: 
         numberOfPayments: (itemToEdit as InstallmentExpense)?.numberOfPayments || 1,
         startDate: (itemToEdit as InstallmentExpense)?.startDate || format(new Date(), 'yyyy-MM-dd'),
     });
+
+    const [areInstallmentsEqual, setAreInstallmentsEqual] = useState(() => {
+        if (itemToEdit && itemToEdit.type === ExpenseType.Installment) {
+            if (!itemToEdit.payments || itemToEdit.payments.length === 0) return true;
+            const firstAmount = itemToEdit.payments[0].amount;
+            return itemToEdit.payments.every(p => p.amount === firstAmount);
+        }
+        return true;
+    });
+
+    const [paymentAmounts, setPaymentAmounts] = useState<string[]>(() => {
+        if (itemToEdit && itemToEdit.type === ExpenseType.Installment) {
+            return itemToEdit.payments.map(p => String(p.amount));
+        }
+        return Array(formData.numberOfPayments).fill('');
+    });
+
+    useEffect(() => {
+        if (expenseType === ExpenseType.Installment && !areInstallmentsEqual) {
+            const numPayments = Number(formData.numberOfPayments) || 0;
+            if (paymentAmounts.length !== numPayments) {
+                const newAmounts = Array(numPayments).fill('');
+                paymentAmounts.slice(0, numPayments).forEach((val, i) => newAmounts[i] = val);
+                setPaymentAmounts(newAmounts);
+            }
+        }
+    }, [formData.numberOfPayments, areInstallmentsEqual, expenseType]);
+
+
+    const handlePaymentAmountChange = (index: number, value: string) => {
+        const newAmounts = [...paymentAmounts];
+        newAmounts[index] = value;
+        setPaymentAmounts(newAmounts);
+    };
     
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value, type } = e.target;
@@ -31,22 +65,38 @@ export const ExpenseForm: React.FC<{ itemToEdit: Expense | null, onSave: (data: 
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        const commonData = { id: itemToEdit?.id, name: formData.name, amount: formData.amount, type: expenseType };
         let data: any;
 
         switch(expenseType) {
             case ExpenseType.Recurring:
-                data = { ...commonData, frequency: formData.frequency, paymentMethod: formData.paymentMethod, paymentSourceId: formData.paymentSourceId, dayOfWeek: formData.dayOfWeek, dayOfMonth: formData.dayOfMonth, dayOfMonth2: formData.dayOfMonth2, suspended: (itemToEdit as RecurringExpense)?.suspended || false };
+                data = { id: itemToEdit?.id, name: formData.name, type: expenseType, amount: formData.amount, frequency: formData.frequency, paymentMethod: formData.paymentMethod, paymentSourceId: formData.paymentSourceId, dayOfWeek: formData.dayOfWeek, dayOfMonth: formData.dayOfMonth, dayOfMonth2: formData.dayOfMonth2, suspended: (itemToEdit as RecurringExpense)?.suspended || false };
                 break;
             case ExpenseType.Casual:
-                data = { ...commonData, date: formData.date };
+                data = { id: itemToEdit?.id, name: formData.name, type: expenseType, amount: formData.amount, date: formData.date };
                 break;
             case ExpenseType.Scheduled:
-                data = { ...commonData, date: formData.date };
+                data = { id: itemToEdit?.id, name: formData.name, type: expenseType, amount: formData.amount, date: formData.date };
                 break;
             case ExpenseType.Installment:
-                 const installmentAmount = formData.totalAmount / formData.numberOfPayments;
-                 data = { ...commonData, amount: installmentAmount, totalAmount: formData.totalAmount, frequency: formData.frequency, numberOfPayments: formData.numberOfPayments, payments: Array.from({ length: formData.numberOfPayments }, () => ({ amount: installmentAmount, paid: false })), paymentMethod: formData.paymentMethod, paymentSourceId: formData.paymentSourceId, startDate: formData.startDate, suspended: (itemToEdit as InstallmentExpense)?.suspended || false };
+                 let payments;
+                 if (areInstallmentsEqual) {
+                    const installmentAmount = formData.numberOfPayments > 0 ? formData.totalAmount / formData.numberOfPayments : 0;
+                    payments = Array.from({ length: formData.numberOfPayments }, () => ({ amount: installmentAmount }));
+                 } else {
+                    payments = paymentAmounts.map(amountStr => ({ amount: parseFloat(amountStr) || 0 }));
+                 }
+                 data = {
+                    id: itemToEdit?.id,
+                    name: formData.name,
+                    type: expenseType,
+                    numberOfPayments: formData.numberOfPayments,
+                    payments,
+                    frequency: formData.frequency,
+                    paymentMethod: formData.paymentMethod,
+                    paymentSourceId: formData.paymentSourceId,
+                    startDate: formData.startDate,
+                    suspended: (itemToEdit as InstallmentExpense)?.suspended || false
+                 };
                  break;
         }
         onSave(data);
@@ -131,9 +181,38 @@ export const ExpenseForm: React.FC<{ itemToEdit: Expense | null, onSave: (data: 
             {expenseType === ExpenseType.Installment && (
                  <>
                     <FormRow>
-                        <Field label="Cantidad Total"><Input name="totalAmount" type="number" value={formData.totalAmount} onChange={handleChange} required /></Field>
+                         <Field label="¿Los montos son iguales?">
+                            <Select value={String(areInstallmentsEqual)} onChange={e => setAreInstallmentsEqual(e.target.value === 'true')}>
+                                <option value="true">Sí</option>
+                                <option value="false">No</option>
+                            </Select>
+                         </Field>
                         <Field label="Número de Pagos"><Input name="numberOfPayments" type="number" min="1" value={formData.numberOfPayments} onChange={handleChange} required /></Field>
                     </FormRow>
+
+                    {areInstallmentsEqual ? (
+                         <FormRow>
+                            <Field label="Cantidad Total"><Input name="totalAmount" type="number" value={formData.totalAmount} onChange={handleChange} required /></Field>
+                         </FormRow>
+                    ) : (
+                        <div className="space-y-4 max-h-48 overflow-y-auto pr-2 border-t border-b border-slate-800 py-4 my-4">
+                           <p className="text-sm text-slate-400 font-semibold mb-2">Montos de cada pago:</p>
+                           {paymentAmounts.map((amount, index) => (
+                               <FormRow key={index}>
+                                   <Field label={`Pago ${index + 1}`}>
+                                       <Input
+                                            type="number"
+                                            value={amount}
+                                            onChange={(e) => handlePaymentAmountChange(index, e.target.value)}
+                                            placeholder="0.00"
+                                            required
+                                        />
+                                   </Field>
+                               </FormRow>
+                           ))}
+                        </div>
+                    )}
+
                      <FormRow>
                         <Field label="Frecuencia de Pago">
                             <Select name="frequency" value={formData.frequency} onChange={handleChange}>

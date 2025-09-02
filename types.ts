@@ -1,4 +1,3 @@
-
 export enum Frequency {
   Weekly = 'Semanal',
   BiWeekly = 'Quincenal',
@@ -114,7 +113,8 @@ export interface SavingsGoal {
   amount: number;
   totalAmount: number;
   dueDate: string;
-  status: 'pending' | 'saved' | 'postponed';
+  status: 'pending' | 'saved' | 'postponed' | 'spent';
+  savedDate?: string;
 }
 
 export type View = 'dashboard' | 'expenses' | 'income' | 'cards';

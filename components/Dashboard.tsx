@@ -7,6 +7,7 @@ import {
 import { es } from 'date-fns/locale';
 import { ChevronLeftIcon, ChevronRightIcon, ClockIcon, LandmarkIcon, SaveIcon, TrendingDownIcon, TrendingUpIcon, WalletIcon, XIcon } from './icons';
 import { EVENT_COLORS } from '../constants';
+import { ExpenseSavings } from './ExpenseSavings';
 
 
 const InfoCard: React.FC<{title: string, amount: number, icon: React.ReactNode, color: string}> = ({title, amount, icon, color}) => (
@@ -20,16 +21,31 @@ const InfoCard: React.FC<{title: string, amount: number, icon: React.ReactNode, 
 );
 
 const SavingsGoalItem: React.FC<{goal: SavingsGoal, onSave: (goal: SavingsGoal) => void, onPostpone: (id: string) => void}> = ({goal, onSave, onPostpone}) => {
-    const progress = (goal.totalAmount > 0) ? ((goal.totalAmount - goal.amount) / goal.totalAmount * 100) : 0; // Simplified
-    const isCompleted = goal.status === 'saved';
+    const progress = (goal.totalAmount > 0) ? ((goal.totalAmount - goal.amount) / goal.totalAmount * 100) : 0;
+    const isSaved = goal.status === 'saved';
     const isPostponed = goal.status === 'postponed';
+    const isSpent = goal.status === 'spent';
+    const isInactive = isSaved || isPostponed || isSpent;
+
+    const getProgressBarClass = () => {
+        if (isSpent) return 'bg-slate-600';
+        if (isSaved) return 'bg-green-700';
+        if (isPostponed) return 'bg-yellow-700';
+        return 'bg-green-500';
+    };
+
+    const getProgressWidth = () => {
+        if (isSpent || isSaved) return 100;
+        if (isPostponed) return 0;
+        return progress;
+    };
 
     return (
-        <div className={`p-4 rounded-lg flex items-center gap-4 transition ${isCompleted || isPostponed ? 'bg-slate-800/50 opacity-60' : 'bg-slate-800'}`}>
+        <div className={`p-4 rounded-lg flex items-center gap-4 transition ${isInactive ? 'bg-slate-800/50 opacity-60' : 'bg-slate-800'}`}>
             <div className="flex-1">
                 <div className="flex justify-between items-baseline mb-1">
-                    <span className={`font-semibold ${isCompleted || isPostponed ? 'text-slate-400' : 'text-white'}`}>{goal.expenseName}</span>
-                    <span className={`text-sm ${isCompleted || isPostponed ? 'text-slate-500' : 'text-slate-400'}`}>
+                    <span className={`font-semibold ${isInactive ? 'text-slate-400' : 'text-white'}`}>{goal.expenseName}</span>
+                    <span className={`text-sm ${isInactive ? 'text-slate-500' : 'text-slate-400'}`}>
                          {isPostponed ? (
                             <span className="font-semibold text-yellow-500">$0.00 (Redistribuido)</span>
                          ) : (
@@ -40,7 +56,7 @@ const SavingsGoalItem: React.FC<{goal: SavingsGoal, onSave: (goal: SavingsGoal) 
                     </span>
                 </div>
                 <div className="w-full bg-slate-700 rounded-full h-2.5">
-                    <div className={`h-2.5 rounded-full ${isCompleted ? 'bg-green-700' : isPostponed ? 'bg-yellow-700' : 'bg-green-500'}`} style={{width: `${isCompleted ? 100 : isPostponed ? 0 : progress}%`}}></div>
+                    <div className={`h-2.5 rounded-full ${getProgressBarClass()}`} style={{width: `${getProgressWidth()}%`}}></div>
                 </div>
             </div>
             {goal.status === 'pending' && (
@@ -52,8 +68,11 @@ const SavingsGoalItem: React.FC<{goal: SavingsGoal, onSave: (goal: SavingsGoal) 
             {isPostponed && (
                 <span className="text-xs font-bold text-yellow-400 uppercase">Pospuesto</span>
             )}
-             {isCompleted && (
+             {isSaved && (
                 <span className="text-xs font-bold text-green-400 uppercase">Ahorrado</span>
+            )}
+            {isSpent && (
+                <span className="text-xs font-bold text-slate-500 uppercase">Utilizado</span>
             )}
         </div>
     );
@@ -150,9 +169,10 @@ interface DashboardProps {
     expenses: Expense[];
     setSavingsGoals: React.Dispatch<React.SetStateAction<SavingsGoal[]>>;
     setCards: React.Dispatch<React.SetStateAction<Card[]>>;
+    handlePayWithSavings: (expenseId: string, paymentAmount: number, sourceCardId: string) => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ savingsGoals, cards, incomes, expenses, setSavingsGoals, setCards }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ savingsGoals, cards, incomes, expenses, setSavingsGoals, setCards, handlePayWithSavings }) => {
     const [currentWeek, setCurrentWeek] = useState(new Date());
     const [calendarDate, setCalendarDate] = useState(new Date());
     
@@ -172,7 +192,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ savingsGoals, cards, incom
     });
     
     const weeklySavingsProgrammed = weeklyGoals.reduce((sum, g) => g.status === 'pending' ? sum + g.amount : sum, 0);
-    const freeCash = weeklyIncomes - weeklySavingsProgrammed;
+    
+    const savingsMadeThisWeek = savingsGoals.reduce((sum, g) => {
+        if ((g.status === 'saved' || g.status === 'spent') && g.savedDate) {
+            const savedDate = new Date(g.savedDate);
+            if (isWithinInterval(savedDate, { start: weekStart, end: weekEnd })) {
+                return sum + g.amount;
+            }
+        }
+        return sum;
+    }, 0);
+
+    const freeCash = weeklyIncomes - savingsMadeThisWeek;
+    
     const accumulatedSavings = (cards.filter(c => c.type === 'debit') as DebitCard[]).reduce((sum, card) => sum + card.balance, 0);
 
     const [debitCardModal, setDebitCardModal] = useState<{isOpen: boolean; goal: SavingsGoal | null}>({isOpen: false, goal: null});
@@ -189,7 +221,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ savingsGoals, cards, incom
     };
 
     const saveToCard = (goal: SavingsGoal, cardId: string) => {
-        setSavingsGoals(prev => prev.map(g => g.id === goal.id ? {...g, status: 'saved'} : g));
+        setSavingsGoals(prev => prev.map(g => g.id === goal.id ? {...g, status: 'saved', savedDate: new Date().toISOString()} : g));
         setCards(prev => prev.map(c => c.id === cardId ? {...c, balance: (c as DebitCard).balance + goal.amount} : c));
         setDebitCardModal({isOpen: false, goal: null});
     };
@@ -337,7 +369,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ savingsGoals, cards, incom
                     let finalAmount = newGoal.amount; // Default to the newly calculated amount
 
                     // If the goal's status is 'saved' or 'postponed', its amount is considered final and should be preserved.
-                    if (existingGoal.status === 'saved' || existingGoal.status === 'postponed') {
+                    if (existingGoal.status === 'saved' || existingGoal.status === 'postponed' || existingGoal.status === 'spent') {
                         finalAmount = existingGoal.amount;
                     } 
                     // If the goal is 'pending' and its underlying total expense amount has NOT changed,
@@ -353,6 +385,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ savingsGoals, cards, incom
                         ...newGoal,
                         status: existingGoal.status, // Always preserve status
                         amount: finalAmount,
+                        savedDate: existingGoal.savedDate,
                     };
                 }
                 return newGoal;
@@ -504,6 +537,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ savingsGoals, cards, incom
                     <FinancialCalendar events={financialEvents} currentDate={calendarDate} setCurrentDate={setCalendarDate} />
                 </div>
             </div>
+
+            <ExpenseSavings 
+                expenses={expenses}
+                savingsGoals={savingsGoals}
+                debitCards={debitCards}
+                handlePayWithSavings={handlePayWithSavings}
+            />
+
              {debitCardModal.isOpen && debitCardModal.goal && (
                 <DebitCardSelectionModal 
                     goal={debitCardModal.goal} 
