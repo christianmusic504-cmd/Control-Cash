@@ -334,7 +334,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ savingsGoals, cards, incom
             return newGoals.map(newGoal => {
                 const existingGoal = prevGoalsMap.get(newGoal.id);
                 if (existingGoal) {
-                    return { ...newGoal, status: existingGoal.status };
+                    let finalAmount = newGoal.amount; // Default to the newly calculated amount
+
+                    // If the goal's status is 'saved' or 'postponed', its amount is considered final and should be preserved.
+                    if (existingGoal.status === 'saved' || existingGoal.status === 'postponed') {
+                        finalAmount = existingGoal.amount;
+                    } 
+                    // If the goal is 'pending' and its underlying total expense amount has NOT changed,
+                    // preserve the existing amount. This handles cases where the amount was adjusted
+                    // by postponing another week's goal.
+                    else if (existingGoal.status === 'pending' && existingGoal.totalAmount === newGoal.totalAmount) {
+                        finalAmount = existingGoal.amount;
+                    }
+                    // If the goal is 'pending' and the totalAmount has changed, `finalAmount` remains `newGoal.amount`,
+                    // effectively resetting the goal to its new base quota.
+
+                    return {
+                        ...newGoal,
+                        status: existingGoal.status, // Always preserve status
+                        amount: finalAmount,
+                    };
                 }
                 return newGoal;
             });

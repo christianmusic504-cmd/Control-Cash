@@ -26,6 +26,20 @@ export default function App() {
   const [modalType, setModalType] = useState<ItemType | null>(null);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [transferModal, setTransferModal] = useState<{isOpen: boolean, cardToDelete: DebitCard | null}>({isOpen: false, cardToDelete: null});
+  
+  const [confirmDelete, setConfirmDelete] = useState<{
+    isOpen: boolean;
+    type: ItemType | null;
+    id: string | null;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    type: null,
+    id: null,
+    message: '',
+    onConfirm: () => {},
+  });
 
   const openModal = (type: ItemType, item: Item | null = null) => {
     setModalType(type);
@@ -218,24 +232,29 @@ export default function App() {
   };
 
   const handleDelete = (type: ItemType, id: string) => {
+    const itemToDelete =
+        type === 'card' ? cards.find(c => c.id === id) :
+        type === 'expense' ? expenses.find(e => e.id === id) :
+        incomes.find(i => i.id === id);
+
+    if (!itemToDelete) return;
+
+    let message = `¿Estás seguro de que quieres eliminar '${itemToDelete.name}'?`;
+    let onConfirmAction = () => {};
+
     if (type === 'card') {
-        const cardToDelete = cards.find(c => c.id === id);
-        if (!cardToDelete) return;
-
-        const linkedExpenses = expenses.filter(
-            exp => 'paymentSourceId' in exp && exp.paymentSourceId === id
-        );
-
-        let confirmMessage = `¿Estás seguro de que quieres eliminar la tarjeta '${cardToDelete.name}'?`;
+        const cardToDelete = itemToDelete as Card;
+        const linkedExpenses = expenses.filter(exp => 'paymentSourceId' in exp && exp.paymentSourceId === id);
+        
         if (linkedExpenses.length > 0) {
-            confirmMessage += ` Esto cambiará el método de pago a 'Efectivo' para ${linkedExpenses.length} gasto(s) asociado(s).`;
+            message += ` Esto cambiará el método de pago a 'Efectivo' para ${linkedExpenses.length} gasto(s) asociado(s).`;
         }
 
-        if (window.confirm(confirmMessage)) {
+        onConfirmAction = () => {
             if (cardToDelete.type === 'debit' && cardToDelete.balance > 0) {
                 const otherDebitCards = cards.filter(c => c.type === 'debit' && c.id !== id);
                 if (otherDebitCards.length > 0) {
-                    setTransferModal({ isOpen: true, cardToDelete: cardToDelete });
+                    setTransferModal({ isOpen: true, cardToDelete: cardToDelete as DebitCard });
                     return; 
                 } else {
                     alert("No puedes eliminar esta tarjeta porque es la única tarjeta de débito con saldo. Para eliminarla, primero transfiere el saldo o crea otra tarjeta de débito.");
@@ -245,30 +264,31 @@ export default function App() {
             
             disassociateExpensesFromCard(id);
             setCards(prev => prev.filter(c => c.id !== id));
-        }
+        };
 
     } else if (type === 'expense') {
-        const expenseToDelete = expenses.find(e => e.id === id);
-        if (!expenseToDelete) return;
-
         const hasGoals = savingsGoals.some(goal => goal.expenseId === id);
-        let confirmMessage = `¿Estás seguro de que quieres eliminar el gasto '${expenseToDelete.name}'?`;
         if (hasGoals) {
-            confirmMessage += ' Esto también eliminará todas sus metas de ahorro asociadas.';
+            message += ' Esto también eliminará todas sus metas de ahorro asociadas.';
         }
 
-        if (window.confirm(confirmMessage)) {
+        onConfirmAction = () => {
             setSavingsGoals(prev => prev.filter(goal => goal.expenseId !== id));
             setExpenses(prev => prev.filter(e => e.id !== id));
-        }
+        };
     } else if (type === 'income') {
-        const incomeToDelete = incomes.find(i => i.id === id);
-        if (!incomeToDelete) return;
-
-        if (window.confirm(`¿Estás seguro de que quieres eliminar el ingreso '${incomeToDelete.name}'?`)) {
+        onConfirmAction = () => {
             setIncomes(prev => prev.filter(i => i.id !== id));
-        }
+        };
     }
+    
+    setConfirmDelete({
+        isOpen: true,
+        type,
+        id,
+        message,
+        onConfirm: onConfirmAction,
+    });
   };
 
 
@@ -327,6 +347,34 @@ export default function App() {
       <Modal isOpen={isModalOpen} onClose={closeModal} title={`${editingItem ? 'Editar' : 'Nuevo'} ${modalType}`}>
         {renderModalContent()}
       </Modal>
+
+      {confirmDelete.isOpen && (
+        <Modal isOpen={confirmDelete.isOpen} onClose={() => setConfirmDelete({ ...confirmDelete, isOpen: false })} title="Confirmar Eliminación">
+            <div>
+                <p className="text-slate-300 mb-8">{confirmDelete.message}</p>
+                <div className="flex justify-end gap-3">
+                    <button
+                        type="button"
+                        onClick={() => setConfirmDelete({ ...confirmDelete, isOpen: false })}
+                        className="px-4 py-2 rounded-md bg-slate-700 hover:bg-slate-600 transition"
+                    >
+                        Cancelar
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            confirmDelete.onConfirm();
+                            setConfirmDelete({ ...confirmDelete, isOpen: false });
+                        }}
+                        className="px-4 py-2 rounded-md bg-red-600 hover:bg-red-700 text-white font-semibold transition"
+                    >
+                        Eliminar
+                    </button>
+                </div>
+            </div>
+        </Modal>
+      )}
+
       {transferModal.isOpen && transferModal.cardToDelete && (
         <DebitCardTransferModal
             isOpen={transferModal.isOpen}
